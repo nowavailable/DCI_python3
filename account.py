@@ -6,10 +6,15 @@ Dictionary is also possible.
 
 Author: David Byers, Serge Beaumont
 7 October 2008
+
+Author: Taiga Tsutsumi
+4 November 2018
 """
 
-import new
-# from types import MethodType as classobj
+from types import MethodType, new_class
+from inspect import isfunction, ismethod
+import re
+
 
 class Role(object):
     """A Role is a special class that never gets
@@ -20,19 +25,39 @@ class Role(object):
     class, and link the new object's dict to the original
     object's dict."""
     def __new__(cls, ob):
-        members=dict(__ob__=ob)
-        if hasattr(ob.__class__, '__slots__'):
-            members['__setattr__']=Role.__setattr
-            members['__getattr__']=Role.__getattr
-            members['__delattr__']=Role.__delattr
-
-        c = new.classobj(("%s as %s.%s" % (ob.__class__.__name__, cls.__module__, cls.__name__)),
-                     (cls, ob.__class__),
-                     members)
+        """ プロキシクラスを動的に作成。そのインスタンスオブジェクトも作成。"""
+        c = new_class(("%s as %s.%s" % (ob.__class__.__name__, cls.__module__, cls.__name__)))
         i = object.__new__(c)
-        if hasattr(ob, '__dict__'):
-            i.__dict__=ob.__dict__
 
+        """ 振る舞いの注入先である、エンティティオブジェクトの基本的性質
+            （属性へのアクセサ等）を、プロキシオブジェクトにセット """
+        members = dict(__ob__ = ob)
+        if hasattr(ob.__class__, '__slots__'):
+            members['__setattr__'] = Role.__setattr
+            members['__getattr__'] = Role.__getattr
+            members['__delattr__'] = Role.__delattr
+        for member in members:
+            setattr(i, member, members[member])
+        if hasattr(ob, '__dict__'):
+            i.__dict__ = ob.__dict__
+
+        """ 振る舞いの注入先である、エンティティオブジェクトのビジネスロジック
+            （※それはRole内のメソッドから呼ばれる想定。）
+            を、プロキシオブジェクトにセット """
+        for method_name in dir(ob):
+            if None is re.search(r'^__', method_name):
+                method = ob.__getattribute__(method_name)
+                if ismethod(method):
+                    setattr(i, method_name, method)
+
+        """ Roleクラスのビジネスロジックを、プロキシオブジェクトにセット """
+        for func_name in dir(cls):
+            if None is re.search(r'^__', func_name):
+                func = cls.__getattribute__(cls, func_name)
+                if isfunction(func):
+                    setattr(i, func_name, MethodType(func, i))
+
+        """ プロキシオブジェクトを返す """
         return i
 
 
@@ -116,3 +141,4 @@ if __name__ == '__main__':
 
     print(src.balance)
     print(dst.balance)
+
